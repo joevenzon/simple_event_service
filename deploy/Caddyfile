@@ -1,0 +1,8 @@
+{$SES_DOMAIN} {
+    encode zstd gzip
+
+    @internal path /readyz /readyz/*
+    respond @internal 404
+
+    reverse_proxy host:8000
+}

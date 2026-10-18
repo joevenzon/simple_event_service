@@ -1,0 +1,44 @@
+name: simple-event-service
+
+services:
+  host:
+    build:
+      context: ..
+      dockerfile: host/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SES_ENV: production
+      SES_DATA_DIR: /data
+    volumes:
+      - ses_data:/data
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      SES_DOMAIN: ${SES_DOMAIN:?Set SES_DOMAIN in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      host:
+        condition: service_healthy
+
+volumes:
+  ses_data:
+  caddy_data:
+  caddy_config:
