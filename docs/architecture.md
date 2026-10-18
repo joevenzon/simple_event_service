@@ -15,7 +15,7 @@ Phase 0 provides:
   Failed DDL rolls back; unknown/newer migration histories reject startup. Existing
   migrations must remain unchanged; add a new version for future schema changes.
 - Tables for clients, events, images, notification rules/deliveries, users, and sessions.
-  These tables establish storage only; their API/worker behavior arrives in later phases.
+  Ingestion and session APIs use these tables in Phase 1; the worker arrives in Phase 3.
 - Operator provisioning with Argon2id password hashes, 256-bit random client tokens,
   SHA-256 token digests, and channel scope validation. Tokens are displayed only after
   a successful commit. Rotation re-enables a revoked client and replaces its token.
@@ -28,9 +28,25 @@ notification processing in Phase 3. The current readiness check covers the datab
 The configured seven-day retention is reserved for Phase 5; no cleanup job exists yet.
 Similarly, `NTFY_*` settings are reserved for Phase 3 and no external requests are sent.
 
-Machine and human authentication remain separate. Future dashboard routes, query APIs,
-and image endpoints must require human sessions; client tokens must never grant access
-to private history. Private image directories are never mounted as static content.
+Phase 1 adds strict event validation, scoped bearer-token authentication, JSON and
+multipart ingest, immutable records, content digests and private sanitized JPEG storage.
+A serialized write transaction decides duplicate/conflict behavior and inserts events
+and image metadata together. Identical concurrent retries create one event/image.
+JSON object key order and equivalent UTC timestamps normalize before hashing; attachment
+identity uses the original uploaded bytes. Ordinary database failures remove image files.
+
+Machine and human authentication remain separate. Query APIs and image endpoints require
+human sessions; client tokens grant ingestion only. Login uses Argon2id, signed login
+CSRF tokens and random, digest-only sessions in SQLite. Logout revokes sessions and checks
+a session-bound CSRF token. The CLI can revoke all sessions for a user. Cookies are Secure
+in production, HttpOnly and SameSite=Lax. Durable SQLite throttles limit login attempts
+per IP/account and ingest attempts per client. Streamed request limits precede parsing.
+Private image directories are never mounted as static content.
+
+Queries use boundary-aware channel equality/ranges and cursor pagination by receipt time
+and ID. A session-protected OpenAPI document describes the producer/query contracts;
+see [the API guide](api.md). The minimal login/account forms are the only HTML screens in
+Phase 1. Event dashboard rendering and heartbeats remain in Phase 2.
 
 Channel matching uses equality or `prefix + '.'`, so `backup.status` matches
 `backup.status.watchdog` but excludes `backup.statuses`. Empty scope lists mean unrestricted

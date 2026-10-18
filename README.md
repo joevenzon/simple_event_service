@@ -4,9 +4,10 @@ A private event archive for independently running clients, with hierarchical cha
 a mobile status page, and selected notifications through ntfy.sh.
 
 Implementation follows [the project plan](simple_event_service_plan.md). **Current milestone:
-Phase 0 bootstrap.** The host runs, persists its schema, and provisions credentials.
-Event ingestion, dashboard login, notifications, retention jobs, and the Frigate client
-are not implemented yet. Do not deploy this milestone expecting monitoring or alert delivery.
+Phase 1 generic ingestion and authenticated queries.** The host accepts JSON/image events,
+enforces scoped client tokens, deduplicates retries, and serves private history through
+human login sessions. Notification delivery, the event dashboard, retention jobs, and
+the Frigate client remain in later phases.
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). From the repository root:
 
@@ -24,6 +25,9 @@ prompts for a password without echoing it. The client command prints a new token
 save it privately. No real credentials are included in the repository.
 
 Check `http://127.0.0.1:8000/healthz` and `http://127.0.0.1:8000/readyz`.
+Open `http://127.0.0.1:8000/login` to sign in and follow the event history API link.
+See [API examples](docs/api.md) to submit `backup.status.freespace` or image events to
+`frigate.front.person`, query history, and use cursor pagination.
 Local development uses `./data`; stop and restart the process to reuse the database.
 Development mode is for loopback access. Production requires HTTPS and a session secret.
 

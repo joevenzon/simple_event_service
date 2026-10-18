@@ -23,6 +23,22 @@ class Settings(BaseSettings):
     ntfy_url: AnyHttpUrl = Field(default="https://ntfy.sh", validation_alias="NTFY_URL")
     ntfy_topic: SecretStr | None = Field(default=None, validation_alias="NTFY_TOPIC")
     ntfy_send_images: bool = Field(default=False, validation_alias="NTFY_SEND_IMAGES")
+    session_hours: int = Field(default=24, ge=1, le=720, validation_alias="SES_SESSION_HOURS")
+    login_attempts: int = Field(default=10, ge=1, validation_alias="SES_LOGIN_ATTEMPTS")
+    login_window_seconds: int = Field(
+        default=300, ge=1, validation_alias="SES_LOGIN_WINDOW_SECONDS"
+    )
+    ingest_per_minute: int = Field(default=60, ge=1, validation_alias="SES_INGEST_PER_MINUTE")
+    max_image_bytes: int = Field(
+        default=5 * 1024 * 1024, ge=1, le=5 * 1024 * 1024, validation_alias="SES_MAX_IMAGE_BYTES"
+    )
+    max_image_pixels: int = Field(
+        default=20_000_000, ge=1, le=20_000_000, validation_alias="SES_MAX_IMAGE_PIXELS"
+    )
+
+    @property
+    def secure_cookies(self) -> bool:
+        return self.environment == "production"
 
     @model_validator(mode="after")
     def validate_deployment(self) -> "Settings":

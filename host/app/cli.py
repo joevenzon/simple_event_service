@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
         "create-admin", help="Create a dashboard user (hidden password prompt)"
     )
     admin.add_argument("username")
+    revoke_sessions = commands.add_parser("revoke-sessions", help="Revoke all sessions for a user")
+    revoke_sessions.add_argument("username")
     client = commands.add_parser("create-client", help="Create a client and display its token once")
     client.add_argument("client_id")
     client.add_argument("--name", help="Display name; defaults to client ID")
@@ -59,6 +61,15 @@ def run(args: argparse.Namespace, database: Database) -> str:
     database.initialize()
     if args.command == "init-db":
         return "Database initialized."
+    if args.command == "revoke-sessions":
+        with database.transaction() as connection:
+            user = connection.execute(
+                "SELECT id FROM human_users WHERE username = ?", (args.username,)
+            ).fetchone()
+            if user is None:
+                raise ValueError("User not found")
+            connection.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+        return "User sessions revoked."
     if args.command == "create-admin":
         if not args.username.strip() or len(args.username) > 100:
             raise ValueError("Username must contain 1-100 characters")

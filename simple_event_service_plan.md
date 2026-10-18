@@ -626,14 +626,16 @@ Use a root-owned `.env` file (or Docker secrets) with restricted permissions, ex
 
 ### Phase 1 — Generic event ingest and authenticated queries
 
-- [ ] Implement channel validation and boundary-aware prefix matcher.
-- [ ] Implement token auth, allowed prefixes, API request validation, duplicate semantics.
-- [ ] Implement JSON and multipart submission with image sanitization/storage.
-- [ ] Implement human login/logout and session management, including secure cookies, session expiry/revocation, CSRF protection on mutating browser actions, and login throttling.
-- [ ] Store events and images persistently; implement query API and pagination.
-- [ ] Require a valid human session for event list/detail and image endpoints; client bearer tokens must not authorize access to these routes.
-- [ ] Add tests for duplicate key, conflicting key, invalid channel, unauthorized channel, oversized/malicious image.
-- [ ] Add authentication tests for login/logout, expired/revoked sessions, CSRF protection, login throttling, and denial of event/image access without a human session (including requests with only a client bearer token).
+- [x] Implement channel validation and boundary-aware prefix matcher.
+- [x] Implement token auth, allowed prefixes, API request validation, duplicate semantics.
+- [x] Implement JSON and multipart submission with image sanitization/storage.
+- [x] Implement human login/logout and session management, including secure cookies, session expiry/revocation, CSRF protection on mutating browser actions, and login throttling.
+- [x] Store events and images persistently; implement query API and pagination.
+- [x] Require a valid human session for event list/detail and image endpoints; client bearer tokens must not authorize access to these routes.
+- [x] Add tests for duplicate key, conflicting key, invalid channel, unauthorized channel, oversized/malicious image.
+- [x] Add authentication tests for login/logout, expired/revoked sessions, CSRF protection, login throttling, and denial of event/image access without a human session (including requests with only a client bearer token).
+
+**Validation (2026-10-18):** 116 tests pass; Ruff lint and formatting pass. Local Uvicorn + curl verification covers JSON/image submission, deduplication, denial of client-token reads, human login, filtered queries and private image access. Phase 0 database upgrade is tested. Docker/container verification remains pending because Docker is unavailable in the implementation environment.
 
 **Done when:** CLI `curl` can submit `backup.status.freespace` and `frigate.front.person` with/without images, repeat submissions are deduped, and only authorized clients can publish. A human can log in and query events or view images using a valid session; unauthenticated requests, expired/revoked sessions, and client bearer tokens alone cannot read event history or images.
 

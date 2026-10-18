@@ -1,7 +1,7 @@
 # Operations
 
-This is the Phase 0 scaffold. It provides provisioning and health checks; ingestion,
-dashboard login, notifications, cleanup, and backups still require implementation.
+Phase 1 provides provisioning, health checks, event/image ingestion, human login and
+private query APIs. The dashboard, notifications, cleanup, and backups remain in later phases.
 
 ## Local development
 
@@ -27,7 +27,13 @@ uv sync --python 3.12 --frozen --all-packages
 | `SES_ENV` | `production`; use `development` only for local access. |
 | `SES_DATA_DIR` | `./data` locally, forced to `/data` by Compose. |
 | `SES_BASE_URL` | `https://localhost`; production must use HTTPS. |
-| `SESSION_SECRET` | Required in production: at least 32 random characters; `replace-` placeholders rejected. Reserved for session implementation. |
+| `SESSION_SECRET` | Required in production: at least 32 random characters; placeholders rejected. Signs CSRF tokens. Keep stable across restarts. |
+| `SES_SESSION_HOURS` | `24`; absolute session lifetime, 1–720 hours. |
+| `SES_LOGIN_ATTEMPTS` | `10`; all login attempts per IP and separately per username during each window. |
+| `SES_LOGIN_WINDOW_SECONDS` | `300`; persistent login throttle window in seconds. |
+| `SES_INGEST_PER_MINUTE` | `60`; ingestion attempts per client per 60-second window, including retries. |
+| `SES_MAX_IMAGE_BYTES` | `5242880` (5 MiB); source and sanitized image limit, adjustable downward. |
+| `SES_MAX_IMAGE_PIXELS` | `20000000`; decoded image pixel cap, adjustable downward. |
 | `EVENT_RETENTION_DAYS` | `7`, positive integer; cleanup is not implemented yet. |
 | `SES_LOG_LEVEL` | `info`; accepts debug, info, warning, error, critical. |
 | `NTFY_URL`, `NTFY_TOPIC` | Reserved for Phase 3. No publish requests currently occur. |
@@ -42,6 +48,7 @@ avoid printing the full validation error because it may contain environment secr
 ```text
 uv run ses init-db
 uv run ses create-admin admin
+uv run ses revoke-sessions admin
 uv run ses create-client frigate-home --name "Home Frigate" --allow-prefix frigate
 uv run ses create-client backup-agent --allow-prefix backup
 uv run ses rotate-client frigate-home
@@ -58,9 +65,32 @@ Omitting `--allow-prefix` during creation grants all channels; specify it for sc
 Each create/rotate command prints its token once after committing. Save it in the client's
 private environment or secret store. The database stores only its digest. Revoke disables
 the client; rotate replaces the token and re-enables it. No token is recoverable from the
-database. Token acceptance at the ingestion endpoint will be implemented in Phase 1.
+database. Revocation and rotation take effect on the next ingest request, including
+duplicate submissions. `revoke-sessions` immediately invalidates all browser sessions
+for a human user without changing their password or client tokens.
 
-## VPS deployment scaffold
+## Authentication and request limits
+
+Use `/login` to sign in, then `/account` for logout or the private event API link.
+Sessions are stored in SQLite and survive restarts. Session expiry is absolute; browsing
+does not extend it. Password verification uses Argon2id. Login attempts are throttled per
+source IP and per exact username, including successful attempts. Both login and per-client
+ingest throttles persist across processes and restarts; responses include `Retry-After`.
+Expired throttle rows are removed on the next throttled request.
+
+Production requires HTTPS as reported by the ASGI server and uses Secure session/CSRF
+cookies. Only Caddy should reach Uvicorn, with trusted proxy headers as configured below.
+Development mode allows HTTP cookies for loopback testing and generates a temporary CSRF
+signing key when no `SESSION_SECRET` is configured. After a development restart, reload
+forms or fetch `/api/v1/session` for a fresh CSRF token; persisted sessions still work.
+Changing `SESSION_SECRET` rotates CSRF signing; use `revoke-sessions` to revoke sessions.
+
+Request byte caps apply while streaming, even without Content-Length. Images are decoded
+and normalized off the request event loop. Original images and EXIF are not retained.
+Accepted event metadata is preserved as submitted; publish only intended private event data.
+See [API details and curl examples](api.md).
+
+## VPS deployment
 
 Requires Docker Engine with Compose on the VPS, a hostname pointing at it, and inbound
 ports 80/443 for Caddy. From the repository root on the VPS:
@@ -80,7 +110,7 @@ docker compose --project-directory deploy exec host ses create-client frigate-ho
 If uv is not installed on the VPS, generate the secret with any available Python 3
 interpreter or a local trusted password manager. Keep `.env` privately owned by the deployer.
 Configure DNS A/AAAA records and the VPS firewall before requesting certificates.
-No deployment is performed by this repository's local bootstrap.
+Local implementation and tests do not deploy to a VPS.
 
 The Docker build context is the repository root; the lockfile is used with `uv sync --frozen`.
 The host runs as UID/GID 10001 with a read-only root filesystem and writable `/data` volume.
@@ -112,6 +142,14 @@ write lock before reading the applied history; re-running initialization does no
 existing users or tokens. Failed migration DDL and version records roll back together.
 A newer or incompatible schema stops initialization instead of attempting a downgrade.
 Add a new numbered migration to `host/app/migrations.py` for schema changes.
+Phase 1 appends migration 2 for persistent request throttles; Phase 0 databases upgrade
+at startup without replacing existing users, tokens, or data.
+
+Images use a temporary file, fsync and atomic rename before their event transaction commits.
+Ordinary write/transaction failures remove staged files and roll back image/event rows.
+A process crash between rename and database commit can leave an unreferenced file; orphan
+reconciliation and scheduled retention arrive in Phase 5. This release has no automatic
+seven-day deletion. Monitor disk use and use only data whose retention you can manage.
 
 The current milestone has no scheduled retention or backup command. Until those are
 implemented, any test data remains on disk. Future backups must use SQLite's online backup

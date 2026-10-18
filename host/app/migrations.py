@@ -92,4 +92,15 @@ MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "CREATE INDEX sessions_expiry ON sessions(expires_at)",
         ),
     ),
+    (
+        2,
+        (
+            """CREATE TABLE rate_limits (
+                key TEXT PRIMARY KEY,
+                attempts INTEGER NOT NULL,
+                expires_at REAL NOT NULL
+            )""",
+            "CREATE INDEX rate_limits_expiry ON rate_limits(expires_at)",
+        ),
+    ),
 )
