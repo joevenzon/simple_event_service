@@ -37,3 +37,42 @@ def test_settings_read_environment_without_exposing_secret(monkeypatch, tmp_path
 def test_image_publishing_cannot_be_enabled_prematurely():
     with pytest.raises(ValidationError, match="not implemented"):
         Settings(_env_file=None, environment="development", ntfy_send_images=True)
+
+
+@pytest.mark.parametrize(
+    "topic", ["frigate", "replace-with-long-random-topic-12345", "x" * 129, "x" * 32 + "/private"]
+)
+def test_topic_rejects_short_placeholder_and_unsafe_names(topic):
+    with pytest.raises(ValidationError, match="NTFY_TOPIC"):
+        Settings(_env_file=None, environment="development", ntfy_topic=topic)
+
+
+def test_empty_topic_disables_and_valid_topic_is_redacted():
+    assert Settings(_env_file=None, environment="development", ntfy_topic="").ntfy_topic is None
+    settings = Settings(_env_file=None, environment="development", ntfy_topic="x" * 48)
+    assert "x" * 48 not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("name", "url"),
+    [
+        ("base_url", "https://user:password@events.example.com"),
+        ("base_url", "https://events.example.com/?secret=value"),
+        ("base_url", "https://events.example.com/subpath"),
+        ("ntfy_url", "https://ntfy.sh/topic"),
+        ("ntfy_url", "https://ntfy.sh/#fragment"),
+    ],
+)
+def test_notification_origins_reject_credentials_and_embedded_paths(name, url):
+    with pytest.raises(ValidationError, match="origins"):
+        Settings(_env_file=None, environment="development", **{name: url})
+
+
+def test_production_relay_requires_https():
+    with pytest.raises(ValidationError, match="NTFY_URL must use HTTPS"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            session_secret="x" * 48,
+            ntfy_url="http://ntfy.sh",
+        )

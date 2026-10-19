@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ event.title }}{% endblock %}
+{% block content %}
+<p><a href="/events">All events</a></p>
+<article class="card detail">
+  <p><span class="badge {{ event.severity }}">{{ event.severity }}</span></p>
+  <h1>{{ event.title }}</h1>
+  <nav class="breadcrumbs" aria-label="Event channel">
+    {% for crumb in breadcrumbs(event.channel) %}
+    <a href="{{ crumb.url }}">{{ crumb.label }}</a>{% if not loop.last %}<span aria-hidden="true"> / </span>{% endif %}
+    {% endfor %}
+  </nav>
+  <p class="message">{{ event.message }}</p>
+  {% if event.image_url %}
+  <a href="{{ event.image_url }}"><img class="full-image" src="{{ event.image_url }}" alt="Snapshot for {{ event.title }}"></a>
+  <p><a href="{{ event.image_url }}">Open full image</a></p>
+  {% endif %}
+  <dl>
+    <dt>Received</dt><dd><time datetime="{{ event.received_at }}">{{ event.received_at }}</time></dd>
+    <dt>Occurred</dt>
+    <dd>
+      {% if event.occurred_at %}<time datetime="{{ event.occurred_at }}">{{ event.occurred_at }}</time>
+      {% else %}Not supplied{% endif %}
+    </dd>
+    <dt>Client</dt><dd><a href="{{ feed_url(client_id=event.client_id) }}">{{ event.client_id }}</a></dd>
+    <dt>Delivery</dt><dd>{{ event.notification_state | replace('_', ' ') }}</dd>
+    {% if event.notification_delivery %}
+    <dt>Delivery attempts</dt><dd>{{ event.notification_delivery.attempts }}</dd>
+    {% if event.notification_delivery.next_attempt_at %}
+    <dt>Next attempt</dt><dd><time datetime="{{ event.notification_delivery.next_attempt_at }}">{{ event.notification_delivery.next_attempt_at }}</time></dd>
+    {% endif %}
+    {% if event.notification_delivery.sent_at %}
+    <dt>Sent to ntfy</dt><dd><time datetime="{{ event.notification_delivery.sent_at }}">{{ event.notification_delivery.sent_at }}</time></dd>
+    {% endif %}
+    {% if event.notification_delivery.last_error %}
+    <dt>Delivery error</dt><dd>{{ event.notification_delivery.last_error }}</dd>
+    {% endif %}
+    {% endif %}
+    <dt>Event key</dt><dd>{{ event.event_key }}</dd>
+    <dt>Event ID</dt><dd>{{ event.id }}</dd>
+    <dt>Tags</dt><dd>{{ event.tags | join(', ') or 'None' }}</dd>
+  </dl>
+  <h2>Metadata</h2>
+  <pre>{{ event.metadata | tojson(indent=2) }}</pre>
+</article>
+{% endblock %}

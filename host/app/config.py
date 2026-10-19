@@ -1,9 +1,10 @@
 """Environment settings shared by the web process and operator CLI."""
 
+import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
+from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,12 @@ class Settings(BaseSettings):
     ntfy_url: AnyHttpUrl = Field(default="https://ntfy.sh", validation_alias="NTFY_URL")
     ntfy_topic: SecretStr | None = Field(default=None, validation_alias="NTFY_TOPIC")
     ntfy_send_images: bool = Field(default=False, validation_alias="NTFY_SEND_IMAGES")
+    notification_cooldown_seconds: int = Field(
+        default=60, ge=0, le=86400, validation_alias="SES_NOTIFICATION_COOLDOWN_SECONDS"
+    )
+    notification_max_attempts: int = Field(
+        default=8, ge=1, le=100, validation_alias="SES_NOTIFICATION_MAX_ATTEMPTS"
+    )
     session_hours: int = Field(default=24, ge=1, le=720, validation_alias="SES_SESSION_HOURS")
     login_attempts: int = Field(default=10, ge=1, validation_alias="SES_LOGIN_ATTEMPTS")
     login_window_seconds: int = Field(
@@ -40,6 +47,12 @@ class Settings(BaseSettings):
     def secure_cookies(self) -> bool:
         return self.environment == "production"
 
+    @field_validator("ntfy_topic", mode="before")
+    @classmethod
+    def empty_topic_disables_delivery(cls, value):
+        """Treat an empty environment value as an unconfigured relay."""
+        return None if value == "" else value
+
     @model_validator(mode="after")
     def validate_deployment(self) -> "Settings":
         if self.environment == "production":
@@ -52,6 +65,22 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ntfy image publishing is not implemented; keep NTFY_SEND_IMAGES=false"
             )
+        # Publish URLs are origins, so credentials or query strings cannot reach push links.
+        for url in (self.base_url, self.ntfy_url):
+            if (
+                url.username
+                or url.password
+                or url.query
+                or url.fragment
+                or url.path not in (None, "/")
+            ):
+                raise ValueError("SES_BASE_URL and NTFY_URL must be origins without credentials")
+        if self.environment == "production" and self.ntfy_url.scheme != "https":
+            raise ValueError("NTFY_URL must use HTTPS in production")
+        if self.ntfy_topic:
+            topic = self.ntfy_topic.get_secret_value()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", topic) or topic.startswith("replace-"):
+                raise ValueError("NTFY_TOPIC must be a random topic of 32-128 URL-safe characters")
         return self
 
     @property

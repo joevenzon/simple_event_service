@@ -1,0 +1,33 @@
+<div class="event-list">
+  {% for event in page['items'] %}
+  <article class="card event-card">
+    {% if event.image_id %}
+    <a class="preview" href="/events/{{ event.id }}" aria-label="View image: {{ event.title }}">
+      <img src="/api/v1/events/{{ event.id }}/thumbnail" alt="Snapshot for {{ event.title }}" width="640" height="480" loading="lazy" decoding="async">
+    </a>
+    {% endif %}
+    <div class="event-copy">
+      <p class="eyebrow">
+        <span class="badge {{ event.severity }}">{{ event.severity }}</span>
+        <time datetime="{{ event.received_at }}">{{ event.received_at }}</time>
+      </p>
+      <h2><a href="/events/{{ event.id }}">{{ event.title }}</a></h2>
+      <nav class="breadcrumbs" aria-label="Event channel">
+        {% for crumb in breadcrumbs(event.channel) %}
+        <a href="{{ crumb.url }}">{{ crumb.label }}</a>{% if not loop.last %}<span aria-hidden="true"> / </span>{% endif %}
+        {% endfor %}
+      </nav>
+      <p class="message excerpt">{{ event.message }}</p>
+      <p class="muted">
+        Client <a href="{{ feed_url(client_id=event.client_id) }}">{{ event.client_id }}</a>
+        · Delivery: {{ event.notification_state | replace('_', ' ') }}
+      </p>
+    </div>
+  </article>
+  {% else %}
+  <div class="card">
+    <p>No events found.</p>
+    <p class="muted">Submit an event or adjust the filters to see activity here.</p>
+  </div>
+  {% endfor %}
+</div>

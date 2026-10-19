@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Clients{% endblock %}
+{% block content %}
+<div class="heading"><h1>Clients</h1><a class="button" href="/clients">Refresh</a></div>
+<p class="muted">Health is based on explicit heartbeats. Event uploads update last activity separately. Refresh to update status.</p>
+<div class="client-grid">
+  {% for client in clients %}
+  <article class="card">
+    <h2>{{ client.name }}</h2>
+    <p><span class="badge {{ client.status }}">{{ client.status | replace('_', ' ') }}</span></p>
+    <dl>
+      <dt>Client ID</dt>
+      <dd><a href="{{ feed_url(client_id=client.id) }}">{{ client.id }}</a></dd>
+      <dt>Allowed channels</dt>
+      <dd>
+        {% for prefix in client.allowed_prefixes %}
+        <a href="{{ feed_url(channel=prefix) }}">{{ prefix }}</a>{% if not loop.last %}, {% endif %}
+        {% else %}All channels{% endfor %}
+      </dd>
+      <dt>Stale after</dt><dd>{{ client.stale_timeout_seconds }} seconds without a heartbeat</dd>
+      {% for label, value in [('Last activity', client.last_seen_at), ('Last heartbeat', client.last_heartbeat_at), ('Last event', client.last_event_at)] %}
+      <dt>{{ label }}</dt>
+      <dd>{% if value %}<time datetime="{{ value }}">{{ value }}</time>{% else %}Never{% endif %}</dd>
+      {% endfor %}
+    </dl>
+    <h3>Latest health report</h3>
+    <pre>{{ client.health | tojson(indent=2) }}</pre>
+  </article>
+  {% else %}<p>No clients registered. Create a client with the provisioning CLI.</p>{% endfor %}
+</div>
+{% endblock %}

@@ -4,22 +4,27 @@ import logging
 import secrets
 import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.staticfiles import StaticFiles
 
 from app.auth import hash_password
+from app.clients import router as client_router
 from app.config import Settings
 from app.db import Database
 from app.ingest import router as ingest_router
 from app.login import router as login_router
 from app.middleware import RequestGuards
+from app.pages import router as page_router
 from app.queries import router as query_router
 from app.schemas import EventInput
 from app.security import require_human
+from app.worker import check_worker
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(login_router)
     application.include_router(ingest_router)
     application.include_router(query_router)
+    application.include_router(client_router)
+    application.include_router(page_router)
+    application.mount(
+        "/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static"
+    )
 
     @application.get(
         "/api/v1/openapi.json", dependencies=[Depends(require_human)], include_in_schema=False
@@ -117,8 +127,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def readyz(request: Request) -> JSONResponse:
         try:
             request.app.state.database.check_ready()
-        except (sqlite3.Error, OSError):
-            logger.warning("Database readiness check failed")
+            if request.app.state.settings.ntfy_topic is not None:
+                check_worker(request.app.state.database)
+        except (sqlite3.Error, OSError, RuntimeError):
+            logger.warning("Database or worker readiness check failed")
             return JSONResponse({"status": "not_ready"}, status_code=503)
         return JSONResponse({"status": "ready"})
 

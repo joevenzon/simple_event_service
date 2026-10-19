@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}Status{% endblock %} · Simple Event Service</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/">Simple Event Service</a>
+    {% if username %}
+    <nav aria-label="Main navigation">
+      <a href="/">Overview</a><a href="/events">Events</a><a href="/clients">Clients</a><a href="/account">Account</a>
+    </nav>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Sign out</button>
+    </form>
+    {% endif %}
+  </header>
+  <main id="main">{% block content %}{% endblock %}</main>
+  <footer>Private event archive · Times shown in your timezone when JavaScript is available; otherwise UTC.</footer>
+</body>
+</html>

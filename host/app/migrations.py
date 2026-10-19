@@ -103,4 +103,41 @@ MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "CREATE INDEX rate_limits_expiry ON rate_limits(expires_at)",
         ),
     ),
+    (
+        3,
+        (
+            """ALTER TABLE notification_deliveries ADD COLUMN ntfy_priority
+                INTEGER NOT NULL DEFAULT 3 CHECK (ntfy_priority BETWEEN 1 AND 5)""",
+            "ALTER TABLE notification_deliveries ADD COLUMN claim_token TEXT",
+            """CREATE TABLE notification_cooldowns (
+                client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                channel TEXT NOT NULL,
+                selected_at TEXT NOT NULL,
+                PRIMARY KEY (client_id, channel)
+            )""",
+            """CREATE TABLE worker_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                heartbeat_at TEXT NOT NULL
+            )""",
+        ),
+    ),
+    (
+        4,
+        (
+            # Preserve existing explicit overrides while allowing severity-based defaults.
+            "ALTER TABLE notification_rules RENAME TO notification_rules_previous",
+            """CREATE TABLE notification_rules (
+                id INTEGER PRIMARY KEY,
+                channel_prefix TEXT NOT NULL,
+                enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                min_severity TEXT NOT NULL
+                    CHECK (min_severity IN ('debug', 'info', 'warning', 'error', 'critical')),
+                ntfy_priority INTEGER CHECK (ntfy_priority BETWEEN 1 AND 5),
+                rule_priority INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )""",
+            "INSERT INTO notification_rules SELECT * FROM notification_rules_previous",
+            "DROP TABLE notification_rules_previous",
+        ),
+    ),
 )

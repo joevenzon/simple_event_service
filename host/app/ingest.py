@@ -14,6 +14,7 @@ from starlette.datastructures import UploadFile
 from app.channels import channel_matches
 from app.db import utc_now
 from app.images import prepare_image, write_image
+from app.notifications import enqueue_notification
 from app.schemas import EventAccepted, EventInput, canonical_json
 from app.security import Client
 
@@ -177,6 +178,7 @@ def store_event(request: Request, client, event: EventInput, image_data: bytes |
                     digest,
                 ),
             )
+            enqueue_notification(connection, event_id, client["id"], event, received_at, settings)
     except BaseException:
         # A rolled-back event must not leave a file behind during ordinary error recovery.
         if created_path is not None:

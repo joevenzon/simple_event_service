@@ -635,27 +635,56 @@ Use a root-owned `.env` file (or Docker secrets) with restricted permissions, ex
 - [x] Add tests for duplicate key, conflicting key, invalid channel, unauthorized channel, oversized/malicious image.
 - [x] Add authentication tests for login/logout, expired/revoked sessions, CSRF protection, login throttling, and denial of event/image access without a human session (including requests with only a client bearer token).
 
-**Validation (2026-10-18):** 116 tests pass; Ruff lint and formatting pass. Local Uvicorn + curl verification covers JSON/image submission, deduplication, denial of client-token reads, human login, filtered queries and private image access. Phase 0 database upgrade is tested. Docker/container verification remains pending because Docker is unavailable in the implementation environment.
+**Validation (2026-10-18):** 116 tests pass; Ruff lint and formatting pass. Local Uvicorn + curl verification covers JSON/image submission, deduplication, denial of client-token reads, human login, filtered queries and private image access. Phase 0 database upgrade is tested.
+
+**Docker validation (2026-10-18):** Compose configuration and the production image build pass on Docker Engine 29.6.1 / Compose v5.3.1. An isolated Compose project passes 54 container checks covering non-root execution, read-only root filesystem, private data permissions, internal readiness and Caddy readiness-route blocking, CLI provisioning, JSON/image ingest, deduplication/conflicts, channel scopes, invalid/oversized images, human-only reads, secure cookies, CSRF, logout, expired/revoked sessions, filtering/pagination, private normalized images, SQLite WAL/integrity, and immediate client revocation. Events, image bytes, active sessions, client tokens, and deduplication survive both host restart and container recreation with the named volume retained. Host-side curl also verifies HTTPS through Caddy's published port. Checks use production settings, temporary credentials, a fresh volume, and localhost TLS with certificate/hostname verification against Caddy's local CA; public VPS DNS/certificate issuance is outside this local check. Temporary containers and volumes are removed afterward.
 
 **Done when:** CLI `curl` can submit `backup.status.freespace` and `frigate.front.person` with/without images, repeat submissions are deduped, and only authorized clients can publish. A human can log in and query events or view images using a valid session; unauthenticated requests, expired/revoked sessions, and client bearer tokens alone cannot read event history or images.
 
 ### Phase 2 — Status page
 
-- [ ] Reuse Phase 1 login/session authentication to protect every status page and image/thumbnail view.
-- [ ] Server-rendered event feed/details with thumbnails and images.
-- [ ] Channel subtree filtering/breadcrumbs; client/severity/date filtering.
-- [ ] Client heartbeat endpoint and client status screen.
+- [x] Reuse Phase 1 login/session authentication to protect every status page and image/thumbnail view.
+- [x] Server-rendered event feed/details with thumbnails and images.
+- [x] Channel subtree filtering/breadcrumbs; client/severity/date filtering.
+- [x] Client heartbeat endpoint and client status screen.
 - [ ] Responsive iPhone testing over public HTTPS.
+
+**Implementation validation (2026-10-18):** 162 tests pass, including 46 new checks for browser-page authentication, safe login return links, HTML escaping, filtered cursor pagination, private bounded thumbnails, heartbeat validation and persistence, revocation/rotation, and client status transitions. Ruff lint/formatting and wheel asset packaging pass. Existing events work with lazy private thumbnail generation; no database migration is required.
+
+**Browser validation (2026-10-18):** Chromium and WebKit pass loopback HTTPS checks at 320×740, 390×844, 844×390, and 1440×900, plus dark-mode and JavaScript-disabled phone layouts. Checks cover secure cookies, login return links, all screens, private images/thumbnails, filter form submission, local-time display, no horizontal overflow, and denial of thumbnail access after logout. The health probe verifies the local TLS certificate; browser automation accepts that isolated self-signed certificate. Repeated test sign-ins use a higher test-only login threshold. Public DNS/TLS, cellular access, and physical iPhone/Safari behavior remain unverified, so the final checkbox stays open; see `docs/operations.md` for the acceptance steps.
 
 **Done when:** Logged-in phone browser can review images remotely; unauthenticated visitors cannot view events/images.
 
 ### Phase 3 — ntfy integration
 
 - [ ] Subscribe iPhone ntfy app to a random topic.
-- [ ] Implement notification rules with most-specific-prefix match.
-- [ ] Durable delivery worker, retries, cooldown, delivery status.
-- [ ] Publish text + authenticated status-page click URL.
-- [ ] Test outage/restart, rate-limits, and notification dedupe.
+- [x] Implement notification rules with most-specific-prefix match.
+- [x] Durable delivery worker, retries, cooldown, delivery status.
+- [x] Publish text + authenticated status-page click URL.
+- [x] Test outage/restart, rate-limits, and notification dedupe.
+
+**Implementation validation (2026-10-18):** 215 tests pass (53 added for Phase 3);
+Ruff lint/formatting and lockfile consistency checks pass. Phase 3 adds CLI-managed notification rules,
+transactional enqueue with frozen priority, persisted per-client/channel cooldowns,
+restart-safe delivery claims, bounded retries with jitter and `Retry-After`, sanitized
+delivery progress in the private API/UI, failed-delivery requeue, and worker heartbeat
+readiness. Migrations 3 and 4 preserve existing events, credentials, and explicit rules;
+existing events are not backfilled into the outbox. An empty topic disables publishing.
+Delivery is at least once: an interrupted result commit can duplicate a push after relay
+acceptance, while event submission retries create only one event and delivery job.
+
+**Container validation (2026-10-18):** The frozen production image builds, and an isolated
+Compose project passes 17 checks against a certificate-verified local HTTPS relay.
+Checks cover non-root startup, CLI provisioning, image ingest and deduplication, durable
+pending jobs, priority mapping, human-only reads, worker readiness, retry after a relay
+503, worker restart recovery, text-only click payloads, metadata/image privacy, cooldown
+suppression, and the worker health command. The test network has no external access;
+no public ntfy notifications are sent. Temporary containers and volumes are removed.
+
+**Manual acceptance remaining:** Subscribe the physical iPhone to a random topic and verify
+one real push, deduplication, and login/detail/image access after tapping over public HTTPS
+and cellular. See `docs/operations.md` for setup and acceptance steps. Phase 3's real-device
+done condition remains unverified.
 
 **Done when:** `curl` submitting an event that matches a notification rule leads to one iPhone push, and tapping it opens the SES event login/detail page. Image is visible **after login**; ntfy itself does not receive JPEG by default.
 

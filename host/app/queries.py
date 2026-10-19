@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from app.channels import validate_channel
+from app.images import thumbnail_path
 from app.schemas import EventPage, EventView, Severity
 from app.security import require_human
 
@@ -75,10 +76,24 @@ def event_response(row) -> dict:
         "tags": json.loads(row["tags_json"]),
         "metadata": json.loads(row["metadata_json"]),
         "image_url": f"/api/v1/events/{row['id']}/image" if row["image_id"] else None,
+        "notification_delivery": {
+            "attempts": row["delivery_attempts"],
+            "last_attempt_at": row["delivery_last_attempt_at"],
+            "next_attempt_at": row["delivery_next_attempt_at"]
+            if row["notification_state"] == "pending"
+            else None,
+            "sent_at": row["delivery_sent_at"],
+            "last_error": row["delivery_last_error"],
+        }
+        if row["delivery_attempts"] is not None
+        else None,
     }
 
 
-EVENT_SELECT = """SELECT events.*, COALESCE(delivery.state, 'not_selected') AS notification_state
+EVENT_SELECT = """SELECT events.*, COALESCE(delivery.state, 'not_selected') AS notification_state,
+    delivery.attempts AS delivery_attempts, delivery.last_attempt_at AS delivery_last_attempt_at,
+    delivery.next_attempt_at AS delivery_next_attempt_at, delivery.sent_at AS delivery_sent_at,
+    delivery.last_error AS delivery_last_error
     FROM events LEFT JOIN notification_deliveries AS delivery
     ON delivery.event_id = events.id AND delivery.provider = 'ntfy'"""
 
@@ -182,4 +197,33 @@ def event_image(request: Request, event_id: UUID):
         raise HTTPException(404, "Image not found")
     return FileResponse(
         path, media_type="image/jpeg", filename=f"{event_id}.jpg", content_disposition_type="inline"
+    )
+
+
+@router.get(
+    "/api/v1/events/{event_id}/thumbnail",
+    response_class=FileResponse,
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+def event_thumbnail(request: Request, event_id: UUID):
+    """Serve a session-protected preview generated from the private normalized image."""
+    with request.app.state.database.connect() as connection:
+        row = connection.execute(
+            """SELECT images.disk_name FROM events JOIN images ON images.id = events.image_id
+            WHERE events.id = ?""",
+            (str(event_id),),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Image not found")
+
+    data_dir = request.app.state.settings.data_dir
+    source = data_dir / "images" / row["disk_name"]
+    if not source.is_file():
+        raise HTTPException(404, "Image not found")
+    path = thumbnail_path(source, data_dir / "thumbnails" / row["disk_name"])
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        filename=f"{event_id}-thumbnail.jpg",
+        content_disposition_type="inline",
     )

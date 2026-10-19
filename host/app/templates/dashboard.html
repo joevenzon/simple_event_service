@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<div class="heading">
+  <div><p class="eyebrow">Private monitoring</p><h1>Overview</h1></div>
+  <a class="button" href="/">Refresh</a>
+</div>
+<p>{{ total }} events in retained history</p>
+<div class="stats">
+  {% for severity in severities %}
+  <a class="card stat" href="{{ feed_url(severity=severity) }}">
+    <span class="badge {{ severity }}">{{ severity }}</span>
+    <strong>{{ counts.get(severity, 0) }}</strong>
+  </a>
+  {% endfor %}
+</div>
+<section aria-labelledby="heartbeat-heading">
+  <div class="heading">
+    <h2 id="heartbeat-heading">Client heartbeats</h2>
+    <a href="/clients">Client details</a>
+  </div>
+  <div class="client-grid">
+    {% for client in clients %}
+    <article class="card">
+      <h3>{{ client.name }}</h3>
+      <p><span class="badge {{ client.status }}">{{ client.status | replace('_', ' ') }}</span></p>
+      <p class="muted">
+        Last heartbeat:
+        {% if client.last_heartbeat_at %}
+        <time datetime="{{ client.last_heartbeat_at }}">{{ client.last_heartbeat_at }}</time>
+        {% else %}Never{% endif %}
+      </p>
+    </article>
+    {% else %}<p>No clients registered. Create a client with the provisioning CLI.</p>{% endfor %}
+  </div>
+</section>
+<section aria-labelledby="recent-heading">
+  <div class="heading">
+    <h2 id="recent-heading">Recent events</h2>
+    <a href="/events">All events and filters</a>
+  </div>
+  {% include "_cards.html" %}
+</section>
+{% endblock %}

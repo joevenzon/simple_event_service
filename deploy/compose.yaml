@@ -22,6 +22,32 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  worker:
+    build:
+      context: ..
+      dockerfile: host/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SES_ENV: production
+      SES_DATA_DIR: /data
+    volumes:
+      - ses_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 30s
+      timeout: 7s
+      start_period: 10s
+      retries: 3
+
   caddy:
     image: caddy:2
     restart: unless-stopped

@@ -66,6 +66,16 @@ class EventAccepted(BaseModel):
     duplicate: bool
 
 
+class DeliveryView(BaseModel):
+    """Expose delivery progress without worker claim tokens or provider response bodies."""
+
+    attempts: int
+    last_attempt_at: str | None
+    next_attempt_at: str | None
+    sent_at: str | None
+    last_error: str | None
+
+
 class EventView(BaseModel):
     id: str
     client_id: str
@@ -83,6 +93,7 @@ class EventView(BaseModel):
     notification_state: Literal[
         "not_selected", "pending", "sent_to_ntfy", "failed", "suppressed_cooldown"
     ]
+    notification_delivery: DeliveryView | None = None
 
 
 class EventPage(BaseModel):
@@ -93,3 +104,35 @@ class EventPage(BaseModel):
 class SessionView(BaseModel):
     username: str
     csrf_token: str
+
+
+class HeartbeatInput(BaseModel):
+    """Validate a small health snapshot independently of user-visible events."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    health: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("health")
+    @classmethod
+    def bounded_health(cls, value: dict) -> dict:
+        if len(canonical_json(value).encode("utf-8")) > 8 * 1024:
+            raise ValueError("Health exceeds 8 KiB")
+        return value
+
+
+class HeartbeatAccepted(BaseModel):
+    status: Literal["accepted"]
+    received_at: str
+
+
+class ClientView(BaseModel):
+    id: str
+    name: str
+    enabled: bool
+    allowed_prefixes: list[str]
+    stale_timeout_seconds: int
+    last_seen_at: str | None
+    last_heartbeat_at: str | None
+    last_event_at: str | None
+    health: dict[str, JsonValue]
+    status: Literal["healthy", "stale", "never_seen", "disabled"]

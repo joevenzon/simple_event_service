@@ -1,6 +1,7 @@
 """Browser login, account and logout routes with persistent private sessions."""
 
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -27,11 +28,35 @@ router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
+def login_destination(request: Request) -> str:
+    """Allow only internal status destinations so login cannot redirect to another site."""
+    destination = request.query_params.get("next", "/")
+    if len(destination) > 2048 or any(ord(char) < 32 for char in destination):
+        return "/"
+    if "\\" in destination:
+        return "/"
+    try:
+        parsed = urlsplit(destination)
+    except ValueError:
+        return "/"
+    if parsed.scheme or parsed.netloc or not destination.startswith("/"):
+        return "/"
+    if parsed.path not in ("/", "/events", "/clients", "/account") and not (
+        parsed.path.startswith("/events/") and len(parsed.path.split("/")) == 3
+    ):
+        return "/"
+    return destination
+
+
 @router.get("/login", include_in_schema=False)
 def login_page(request: Request):
     """Render an escaped sign-in form and set its short-lived CSRF cookie."""
     csrf = issue_login_csrf(request)
-    response = templates.TemplateResponse(request, "login.html", {"csrf_token": csrf})
+    destination = login_destination(request)
+    action = "/login?" + urlencode({"next": destination})
+    response = templates.TemplateResponse(
+        request, "login.html", {"csrf_token": csrf, "login_action": action}
+    )
     response.set_cookie(
         LOGIN_COOKIE,
         csrf,
@@ -104,7 +129,7 @@ def complete_login(request: Request, username: str, password: str):
         )
 
     # Raw session credentials leave the server only in the HttpOnly cookie.
-    response = RedirectResponse("/account", status_code=303)
+    response = RedirectResponse(login_destination(request), status_code=303)
     response.set_cookie(
         SESSION_COOKIE,
         token,

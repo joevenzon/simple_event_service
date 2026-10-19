@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Events{% endblock %}
+{% block content %}
+<div class="heading">
+  <h1>Events</h1>
+  <a class="button" href="/events">Clear filters</a>
+</div>
+<form class="card filters" method="get" action="/events">
+  <div class="field">
+    <label for="channel">Channel subtree</label>
+    <input id="channel" name="channel" value="{{ filters.get('channel') or '' }}" placeholder="backup.status" maxlength="255" autocapitalize="none" spellcheck="false">
+  </div>
+  <div class="field">
+    <label for="subtree">Channel match</label>
+    <select id="subtree" name="subtree">
+      <option value="true">Subtree</option>
+      <option value="false" {% if filters.get('subtree') in [false, 'false'] %}selected{% endif %}>Exact channel</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="client_id">Client</label>
+    <select id="client_id" name="client_id">
+      <option value="">All clients</option>
+      {% for client in clients %}
+      <option value="{{ client.id }}" {% if filters.get('client_id') == client.id %}selected{% endif %}>{{ client.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="severity">Severity</label>
+    <select id="severity" name="severity">
+      <option value="">All severities</option>
+      {% for severity in severities %}
+      <option {% if filters.get('severity') == severity %}selected{% endif %}>{{ severity }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="date_from">From date (UTC)</label>
+    <input id="date_from" type="date" name="date_from" value="{{ filters.get('date_from') or '' }}">
+  </div>
+  <div class="field">
+    <label for="date_through">Through date (UTC)</label>
+    <input id="date_through" type="date" name="date_through" value="{{ filters.get('date_through') or '' }}">
+  </div>
+  <div class="field">
+    <label for="search">Search title or message</label>
+    <input id="search" type="search" name="search" value="{{ filters.get('search') or '' }}" maxlength="200">
+  </div>
+  <div class="field">
+    <label for="limit">Events per page</label>
+    <select id="limit" name="limit">
+      {% for size in [10, 25, 50, 100] %}
+      <option value="{{ size }}" {% if (filters.get('limit', 50) | int) == size %}selected{% endif %}>{{ size }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit">Apply filters</button>
+</form>
+{% if error %}<p class="error card" role="alert">{{ error }}</p>{% endif %}
+{% if filters.get('channel') and not error %}
+<nav class="breadcrumbs" aria-label="Selected channel">
+  <a href="/events">All events</a>
+  {% for crumb in breadcrumbs(filters.channel) %}
+  <span aria-hidden="true"> / </span><a href="{{ crumb.url }}">{{ crumb.label }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+{% include "_cards.html" %}
+<nav class="pagination" aria-label="Event pages">
+  {% if filters.get('cursor') and not error %}<a class="button" href="{{ first_url }}">Newest matching events</a>{% endif %}
+  {% if page.next_cursor %}<a class="button" href="{{ next_url }}" rel="next">Older events</a>{% endif %}
+</nav>
+{% endblock %}

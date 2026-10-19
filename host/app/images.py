@@ -61,6 +61,12 @@ def write_image(image: PreparedImage, data_dir: Path, received_at: str) -> tuple
     image_id = str(uuid4())
     disk_name = received_at[:10].replace("-", "/") + "/" + image_id + ".jpg"
     path = data_dir / "images" / disk_name
+    write_private_file(path, image.data)
+    return image_id, disk_name, path
+
+
+def write_private_file(path: Path, data: bytes) -> None:
+    """Atomically replace a private file, removing temporary data on write failures."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     # Keep the temporary file on the same filesystem so rename remains atomic.
@@ -70,7 +76,7 @@ def write_image(image: PreparedImage, data_dir: Path, received_at: str) -> tuple
             dir=path.parent, prefix=".upload-", delete=False
         ) as stream:
             temporary = Path(stream.name)
-            stream.write(image.data)
+            stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -78,4 +84,14 @@ def write_image(image: PreparedImage, data_dir: Path, received_at: str) -> tuple
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         raise
-    return image_id, disk_name, path
+
+
+def thumbnail_path(source: Path, destination: Path) -> Path:
+    """Lazily derive a bounded preview from a sanitized JPEG, including older events."""
+    if not destination.is_file():
+        with Image.open(source) as image:
+            image.thumbnail((640, 480), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=75)
+        write_private_file(destination, output.getvalue())
+    return destination

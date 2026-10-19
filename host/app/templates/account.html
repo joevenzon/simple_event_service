@@ -1,14 +1,10 @@
-<!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Account · Simple Event Service</title>
-<main>
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<div class="card">
   <h1>Signed in as {{ username }}</h1>
+  <p><a href="/">Open dashboard</a></p>
   <p><a href="/api/v1/events">Event history API</a></p>
-  <form method="post" action="/logout">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button type="submit">Sign out</button>
-  </form>
-</main>
-</html>
+  <p>Use Sign out above to revoke this browser session.</p>
+</div>
+{% endblock %}

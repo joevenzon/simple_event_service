@@ -6,7 +6,7 @@ import json
 import re
 import sqlite3
 import warnings
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
@@ -14,6 +14,7 @@ from app.auth import hash_password, issue_token
 from app.channels import validate_channel
 from app.config import Settings
 from app.db import Database, utc_now
+from app.notifications import NotificationRule
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +44,27 @@ def build_parser() -> argparse.ArgumentParser:
     group = scopes.add_mutually_exclusive_group(required=True)
     group.add_argument("--allow-prefix", action="append")
     group.add_argument("--unrestricted", action="store_true")
+    rule = commands.add_parser("add-notification-rule", help="Allow or suppress push for a subtree")
+    rule.add_argument("channel_prefix", help="A valid channel prefix, or '*' for all channels")
+    rule.add_argument("--disabled", action="store_true", help="Suppress matching notifications")
+    rule.add_argument(
+        "--min-severity", choices=("debug", "info", "warning", "error", "critical"), default="info"
+    )
+    rule.add_argument(
+        "--ntfy-priority",
+        type=int,
+        choices=range(1, 6),
+        help="Override the severity-based priority",
+    )
+    rule.add_argument("--rule-priority", type=int, default=0, help="Higher wins equal-prefix ties")
+    rule.add_argument("--sort-order", type=int, default=0, help="Lower wins remaining ties")
+    commands.add_parser("list-notification-rules", help="List policy as JSON in insertion order")
+    remove = commands.add_parser("remove-notification-rule", help="Remove a rule for future events")
+    remove.add_argument("rule_id", type=int)
+    requeue = commands.add_parser(
+        "requeue-delivery", help="Reset a failed event delivery for retry"
+    )
+    requeue.add_argument("event_id", type=UUID)
     return parser
 
 
@@ -61,6 +83,56 @@ def run(args: argparse.Namespace, database: Database) -> str:
     database.initialize()
     if args.command == "init-db":
         return "Database initialized."
+    if args.command == "add-notification-rule":
+        policy = NotificationRule(
+            channel_prefix=args.channel_prefix,
+            enabled=not args.disabled,
+            min_severity=args.min_severity,
+            ntfy_priority=args.ntfy_priority,
+            rule_priority=args.rule_priority,
+            sort_order=args.sort_order,
+        )
+        with database.transaction() as connection:
+            result = connection.execute(
+                """INSERT INTO notification_rules(channel_prefix, enabled, min_severity,
+                    ntfy_priority, rule_priority, sort_order) VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    policy.channel_prefix,
+                    policy.enabled,
+                    policy.min_severity,
+                    policy.ntfy_priority,
+                    policy.rule_priority,
+                    policy.sort_order,
+                ),
+            )
+        return f"Notification rule {result.lastrowid} created."
+    if args.command == "list-notification-rules":
+        with database.connect() as connection:
+            rules = [
+                dict(row)
+                for row in connection.execute("SELECT * FROM notification_rules ORDER BY id")
+            ]
+        return json.dumps(rules, indent=2)
+    if args.command == "remove-notification-rule":
+        with database.transaction() as connection:
+            result = connection.execute(
+                "DELETE FROM notification_rules WHERE id = ?", (args.rule_id,)
+            )
+            if result.rowcount != 1:
+                raise ValueError("Notification rule not found")
+        return "Notification rule removed; queued deliveries are unchanged."
+    if args.command == "requeue-delivery":
+        with database.transaction() as connection:
+            result = connection.execute(
+                """UPDATE notification_deliveries SET state = 'pending', attempts = 0,
+                    next_attempt_at = ?, last_attempt_at = NULL, last_error = NULL,
+                    provider_response_id = NULL, sent_at = NULL, claim_token = NULL
+                    WHERE event_id = ? AND state = 'failed'""",
+                (utc_now(), str(args.event_id)),
+            )
+            if result.rowcount != 1:
+                raise ValueError("Failed delivery not found")
+        return "Failed delivery requeued."
     if args.command == "revoke-sessions":
         with database.transaction() as connection:
             user = connection.execute(
@@ -133,6 +205,8 @@ def main(argv: list[str] | None = None) -> None:
         settings = Settings()
         message = run(args, Database(settings.database_path))
     except ValidationError:
+        if args.command == "add-notification-rule":
+            parser.exit(2, "Invalid notification rule; check its channel and policy fields.\n")
         # Pydantic's complete error representation can contain environment values.
         parser.exit(
             2, "Invalid environment configuration; check SES settings in docs/operations.md.\n"

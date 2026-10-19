@@ -1,27 +1,36 @@
 # API v1
 
-Phase 1 implements generic ingestion, browser authentication and private history.
-All production requests require HTTPS. Client bearer tokens authorize ingestion only;
+Phase 3 implements generic ingestion, browser authentication, private history, status
+pages, client heartbeats, and asynchronous host-approved ntfy delivery.
+All production requests require HTTPS. Client bearer tokens authorize event/heartbeat submissions only;
 history and images require a separate human session cookie.
 
 | Endpoint | Authentication | Behavior |
 | --- | --- | --- |
 | `GET /healthz` | None | Process liveness; `200 {"status":"ok"}`. |
-| `GET /readyz` | Internal | Database write-and-rollback probe; 503 on failure. Caddy blocks this route. |
+| `GET /readyz` | Internal | Database write probe and worker heartbeat when a topic is configured; 503 on failure. Caddy blocks this route. |
 | `GET /login` | None | Browser form with signed, ten-minute CSRF cookie and hidden token. |
-| `POST /login` | Login CSRF token | URL-encoded `username`, `password`, `csrf_token`; sets session cookie and redirects to `/account`. |
-| `GET /account` | Human session | Minimal account and logout form; dashboard arrives in Phase 2. |
+| `POST /login` | Login CSRF token | URL-encoded `username`, `password`, `csrf_token`; sets session cookie and redirects to `/` or a validated internal `next` destination. |
+| `GET /` | Human session | Dashboard, severity counts, recent events, and heartbeat summary. |
+| `GET /events` | Human session | Filtered, paginated HTML event feed with thumbnails. |
+| `GET /events/{id}` | Human session | Event details and full private snapshot. |
+| `GET /clients` | Human session | Client heartbeat status and latest health reports. |
+| `GET /account` | Human session | Account, dashboard/API links, and logout form. |
 | `GET /api/v1/session` | Human session | Username and session-bound `csrf_token`. |
 | `POST /logout` | Human session + CSRF | Revokes current session; clears cookie; redirects to `/login`. |
 | `POST /api/v1/events` | Client bearer | JSON or multipart ingestion. |
+| `POST /api/v1/heartbeat` | Client bearer | Record liveness and optional health snapshot. |
+| `GET /api/v1/clients` | Human session | List registered clients, scopes, and heartbeat health. |
 | `GET /api/v1/events` | Human session | Filtered, cursor-paginated history. |
 | `GET /api/v1/events/{id}` | Human session | Immutable event details. |
 | `GET /api/v1/events/{id}/image` | Human session | Private normalized JPEG; 404 if absent. |
+| `GET /api/v1/events/{id}/thumbnail` | Human session | Private JPEG preview, bounded to 640×480; 404 if no image. |
 | `GET /api/v1/openapi.json` | Human session | OpenAPI contract, including JSON/multipart request schemas and authentication. |
 
-Interactive OpenAPI documentation remains disabled. Heartbeats, client status, event
-dashboard pages and notification delivery are not implemented yet. All Phase 1 events
-have `notification_state: "not_selected"`; no notification jobs are created.
+Interactive OpenAPI documentation remains disabled. Notification selection and durable
+enqueue happen in the event transaction; HTTP acceptance never waits for ntfy.
+Signed-out HTML screen requests redirect to login, while private
+API/image/thumbnail requests return 401. Client bearer tokens do not authorize those reads.
 
 ## Submit events
 
@@ -39,7 +48,7 @@ Optional fields:
 - `occurred_at`: ISO-8601 timestamp with timezone, normalized to UTC; naive dates rejected.
 - `metadata`: JSON object, at most 16 KiB when compactly serialized as UTF-8; no NaN/infinity.
 - `tags`: at most 32 strings matching `[a-z][a-z0-9_-]{0,39}`.
-- `notify`: boolean hint; notification policy arrives in Phase 3.
+- `notify`: boolean hint; false opts out, while true cannot override host notification policy.
 
 Unknown fields and implicit type conversions are rejected. JSON bodies are capped at
 64 KiB. Multipart uses exactly one text field named `event` containing the same JSON,
@@ -131,6 +140,13 @@ Development cookies permit loopback HTTP; development mode must remain local.
 event fields, host ID, client ID, UTC received time, image ID/private relative image URL
 (or null), and notification state. Digests, credentials and disk paths are never returned.
 
+`notification_state` is `not_selected`, `pending`, `sent_to_ntfy`, `failed`, or
+`suppressed_cooldown`. A nullable `notification_delivery` object supplies `attempts`,
+`last_attempt_at`, `next_attempt_at` (pending only), `sent_at`, and sanitized `last_error`.
+Delivery fields may change as the worker runs; the submitted event remains immutable.
+Relay acceptance does not establish iPhone receipt. Identical event retries do not create
+another job. A worker crash after relay acceptance can duplicate a push on recovery.
+
 | Parameter | Semantics |
 | --- | --- |
 | `channel` | Valid channel; matches the exact channel and descendants by default. |
@@ -147,3 +163,52 @@ Ordering is `(received_at DESC, id DESC)`. Cursors handle tied timestamps withou
 repeating entries; new events appear on a fresh first page. History and image responses
 use `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`.
 Image directories have no static or anonymous route.
+
+## Client heartbeats and health
+
+`POST /api/v1/heartbeat` requires a client bearer token. Send a JSON object containing an
+optional `health` object; unknown top-level fields and nonfinite numbers are rejected.
+Each successful call replaces the previous health snapshot (default `{}`), sets
+`last_heartbeat_at` and `last_seen_at` to host receipt time, and returns
+`200 {"status":"accepted","received_at":"…Z"}`. It creates no event or notification.
+
+```sh
+curl --fail-with-body -H "Authorization: Bearer $SES_CLIENT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"health":{"mqtt_connected":true,"queue_size":0}}' "$SES_BASE_URL/api/v1/heartbeat"
+```
+
+The health object is capped at 8 KiB in compact UTF-8 JSON; the entire streamed request
+is capped at 16 KiB. Health need not contain Frigate-specific fields. Heartbeats share
+the event ingestion per-client rate limit and return 429 with `Retry-After` when full.
+Malformed bodies return 422; oversized requests return 413. Revoked/rotated/disabled client
+credentials return 401 immediately, including a recheck inside the write transaction.
+
+`GET /api/v1/clients` requires a human session and returns an array containing `id`, `name`,
+`enabled`, `allowed_prefixes`, `stale_timeout_seconds`, `last_seen_at`, `last_heartbeat_at`,
+`last_event_at`, `health`, and `status`. Credential hashes are excluded. An empty scope list
+means all valid channels. Status is `disabled` for disabled clients, `never_seen` before
+the first heartbeat, `healthy` when the heartbeat age is less than the client’s timeout
+(default 180 seconds), and `stale` thereafter. An event submission updates last activity
+and last event time but does not substitute for an explicit heartbeat.
+
+## Browser filters and images
+
+The HTML feed at `/events` accepts `channel`, `subtree`, `client_id`, `severity`, `search`,
+`limit`, and `cursor` with the API’s semantics. Browser date controls use `date_from` and
+`date_through` as inclusive UTC calendar dates; these map to `received_from` at midnight
+and `received_before` at midnight after the through date. Empty controls mean no filter.
+The page shows escaped validation errors and returns 422 for invalid filters. Pagination
+retains all filters; submitting the filter form starts at the newest matching event.
+Channel breadcrumb links select the corresponding subtree.
+
+Image events use `/api/v1/events/{id}/thumbnail` in the feed and the full private image
+endpoint on the detail page. Previews are generated from sanitized originals on first
+authenticated access and cached privately on disk. Every subsequent request still checks
+the human session, including expiry, revocation and account disablement. Both full images
+and previews use `Cache-Control: private, no-store`, inline JPEG content disposition, and
+`X-Content-Type-Options: nosniff`. Source files and cached previews have no static routes.
+
+HTML renders UTC timestamps without JavaScript. The optional script formats them in the
+browser’s local timezone with relative ages; filtering continues to use the labeled UTC
+dates. No JavaScript is required for authentication, filtering, pagination, or image views.
