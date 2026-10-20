@@ -1,0 +1,20 @@
+services:
+  frigate-monitor:
+    build:
+      context: ../..
+      dockerfile: clients/frigate_monitor/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - frigate_monitor_data:/data
+      # Mount a custom Frigate CA here when using frigate.ca_file.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 90s
+
+volumes:
+  frigate_monitor_data:

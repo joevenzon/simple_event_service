@@ -1,6 +1,6 @@
 # API v1
 
-Phase 3 implements generic ingestion, browser authentication, private history, status
+The service provides generic ingestion, browser authentication, private history, status
 pages, client heartbeats, and asynchronous host-approved ntfy delivery.
 All production requests require HTTPS. Client bearer tokens authorize event/heartbeat submissions only;
 history and images require a separate human session cookie.
@@ -41,7 +41,9 @@ An empty scope list permits any valid channel. Prefix checks respect segment bou
 Required JSON fields: `event_key` (1–200 characters), `channel`, `severity`, `title`
 (1–200 characters, nonblank), and `message` (up to 4,000 characters, may be empty).
 Keys and titles cannot contain ASCII control characters. Severity is one of `debug`,
-`info`, `warning`, `error`, `critical`. Channels follow the plan's lowercase ASCII syntax.
+`info`, `warning`, `error`, `critical`. Channels contain 1–12 dot-separated segments,
+each matching `[a-z][a-z0-9_-]{0,39}`, with a maximum total length of 255 characters.
+Empty segments and wildcards are invalid. For example, `frigate.front.person` is valid.
 
 Optional fields:
 

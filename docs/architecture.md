@@ -1,11 +1,10 @@
-# Architecture and implementation status
+# Architecture
 
-The [implementation plan](../simple_event_service_plan.md) remains the full specification.
 The generic host is an installable Python package in `host/`; no Frigate code is imported
 or required by the host. The root uv workspace provides a shared dependency lockfile
 and lint/test configuration.
 
-Phase 0 provides:
+The host provides:
 
 - Environment settings with separate development and production modes.
 - FastAPI startup initialization, liveness, and database write-readiness checks.
@@ -13,9 +12,8 @@ Phase 0 provides:
   write transactions. Connections are short lived and closed after use.
 - Versioned migrations applied inside one transaction, including schema history.
   Failed DDL rolls back; unknown/newer migration histories reject startup. Existing
-  migrations must remain unchanged; add a new version for future schema changes.
+  migrations must remain unchanged; append a version for each schema change.
 - Tables for clients, events, images, notification rules/deliveries, users, and sessions.
-  Ingestion and session APIs use these tables in Phase 1; the worker arrives in Phase 3.
 - Operator provisioning with Argon2id password hashes, 256-bit random client tokens,
   SHA-256 token digests, and channel scope validation. Tokens are displayed only after
   a successful commit. Rotation re-enables a revoked client and replaces its token.
@@ -27,10 +25,43 @@ worker share SQLite and private files; only Caddy publishes ports. The worker in
 the schema independently so startup does not depend on host readiness. `/readyz` checks
 database writes and, when a topic is configured, a worker heartbeat within 120 seconds.
 Readiness does not require ntfy availability; outages remain queued for retry.
-The configured seven-day retention is reserved for Phase 5; no cleanup job exists yet.
+The worker runs retention cleanup at startup and hourly, including with an empty ntfy
+topic. `EVENT_RETENTION_DAYS` defaults to seven days; expiry uses host `received_at`,
+independent of the producer's clock. Events strictly older than the cutoff are deleted
+in batches of 100, cascading to every delivery state. Unreferenced image metadata is
+then deleted, and both private file trees are reconciled against current image references.
+This removes expired originals/previews, abandoned uploads, orphan files, and empty date
+directories without following directory symlinks. Filesystem pruning, ingest writes,
+and thumbnail generation share SQLite's writer lock to protect in-progress writes.
 
-Phase 1 adds strict event validation, scoped bearer-token authentication, JSON and
-multipart ingest, immutable records, content digests and private sanitized JPEG storage.
+Database deletions commit before file reconciliation. A crash or failed unlink leaves
+an orphan that a later pass can retry without deleting files for retained events.
+The worker advances one batch between delivery attempts, preserving notification and
+heartbeat progress. Delivery claims skip expired history even while cleanup is in progress.
+Storage failures retry after a minute; cleanup totals and generic
+errors are logged without event contents or private filenames. An immediate pass is
+available through `python -m app.cleanup` using the same settings and storage.
+
+The independently packaged `clients/frigate_monitor/` producer runs through its own
+home Compose configuration. Host and client images install only their own workspace package.
+The monitor has no host imports: it implements the documented JSON/multipart producer
+and heartbeat contracts over HTTP. See [monitor operations](frigate-monitor.md).
+
+MQTT callbacks validate review messages and durably insert the first qualifying person
+alert before acknowledging it. A separate loop resolves a review thumbnail or associated
+person snapshot, freezes its JSON and JPEG in SQLite, and uploads with a stable review
+event key. Transient failures remain queued across restarts; permanent HTTP errors keep
+failed payloads for explicit requeue. Successful jobs retain compact deduplication
+receipts. A local process lock serializes delivery. Broker persistent sessions and source
+QoS determine whether messages emitted while disconnected can be replayed.
+
+The monitor periodically reports MQTT subscription status, API connectivity/version,
+outbox counts, and upload time through the heartbeat API. It changes no NVR
+settings and publishes no MQTT commands. Deployment verification includes manual checks
+of version/camera compatibility and physical camera/phone behavior.
+
+Event ingestion uses strict validation, scoped bearer-token authentication, JSON and
+multipart requests, immutable records, content digests and private sanitized JPEG storage.
 A serialized write transaction decides duplicate/conflict behavior and inserts events
 and image metadata together. Identical concurrent retries create one event/image.
 JSON object key order and equivalent UTC timestamps normalize before hashing; attachment
@@ -48,17 +79,17 @@ Queries use boundary-aware channel equality/ranges and cursor pagination by rece
 and ID. A session-protected OpenAPI document describes the producer/query contracts;
 see [the API guide](api.md).
 
-Phase 2 reuses those session checks for server-rendered Jinja2 screens at `/`, `/events`,
+Server-rendered Jinja2 screens use the same session checks at `/`, `/events`,
 `/events/{id}`, and `/clients`. Signed-out page requests redirect to login and return to
-a validated internal destination after authentication. JSON/image endpoints still return
-401. Event text, client names, and metadata are escaped; logout uses the existing CSRF
+a validated internal destination after authentication. Signed-out JSON/image requests return
+401. Event text, client names, and metadata are escaped; logout uses session-bound CSRF
 protection. Public static routes contain only application CSS and time-formatting JavaScript.
 The screens work without JavaScript; an optional script shows local times and relative ages.
 Feed filters use inclusive UTC calendar dates converted to the query API’s half-open range.
 
 Thumbnails are generated on first authenticated access from normalized private images,
 bounded to 640×480, and atomically cached under `/data/thumbnails` with private permissions.
-This supports images stored before Phase 2 without a schema migration or backfill. Both
+Images do not need a precomputed preview or a database backfill. Both
 originals and previews require a current human session on every request, even after the
 preview exists, and use private/no-store response headers.
 
@@ -75,7 +106,7 @@ Channel matching uses equality or `prefix + '.'`, so `backup.status` matches
 publishing; explicit scopes must be valid channels. `*` is reserved for notification rule
 configuration, not client scopes or stored event channels.
 
-Phase 3 evaluates notification policy inside the event's write transaction. The most
+The host evaluates notification policy inside the event's write transaction. The most
 specific matching prefix wins, followed by descending `rule_priority`, ascending
 `sort_order`, and ascending rule ID (insertion order). Disabled rules suppress matching
 events; a failed minimum-severity check does not fall back to a broader rule. No match

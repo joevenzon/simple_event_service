@@ -207,20 +207,21 @@ def event_image(request: Request, event_id: UUID):
 )
 def event_thumbnail(request: Request, event_id: UUID):
     """Serve a session-protected preview generated from the private normalized image."""
-    with request.app.state.database.connect() as connection:
+    # Serialize preview writes with retention and orphan pruning, including temp files.
+    with request.app.state.database.transaction() as connection:
         row = connection.execute(
             """SELECT images.disk_name FROM events JOIN images ON images.id = events.image_id
             WHERE events.id = ?""",
             (str(event_id),),
         ).fetchone()
-    if row is None:
-        raise HTTPException(404, "Image not found")
+        if row is None:
+            raise HTTPException(404, "Image not found")
 
-    data_dir = request.app.state.settings.data_dir
-    source = data_dir / "images" / row["disk_name"]
-    if not source.is_file():
-        raise HTTPException(404, "Image not found")
-    path = thumbnail_path(source, data_dir / "thumbnails" / row["disk_name"])
+        data_dir = request.app.state.settings.data_dir
+        source = data_dir / "images" / row["disk_name"]
+        if not source.is_file():
+            raise HTTPException(404, "Image not found")
+        path = thumbnail_path(source, data_dir / "thumbnails" / row["disk_name"])
     return FileResponse(
         path,
         media_type="image/jpeg",

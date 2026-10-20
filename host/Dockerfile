@@ -4,9 +4,10 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /opt/ses
 COPY pyproject.toml uv.lock ./
 COPY host/pyproject.toml host/pyproject.toml
-RUN uv sync --frozen --no-dev --all-packages --no-install-workspace
+COPY clients/frigate_monitor/pyproject.toml clients/frigate_monitor/pyproject.toml
+RUN uv sync --frozen --no-dev --package ses-host --no-install-workspace
 COPY host/app host/app
-RUN uv sync --frozen --no-dev --all-packages --no-editable
+RUN uv sync --frozen --no-dev --package ses-host --no-editable
 
 FROM python:3.12-slim AS runtime
 ENV PATH="/opt/ses/.venv/bin:$PATH" \

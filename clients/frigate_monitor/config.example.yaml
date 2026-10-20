@@ -1,0 +1,32 @@
+# Copy to config.yaml and replace camera IDs, origins, and broker settings.
+# Secrets are environment variables, never YAML values.
+frigate:
+  api_base_url: https://frigate.example.lan:8971
+  api_auth: login
+  username_env: FRIGATE_USERNAME
+  password_env: FRIGATE_PASSWORD
+  # ca_file: /config/frigate-ca.pem
+  mqtt_host: mosquitto
+  mqtt_port: 1883
+  # Keep this stable and unique on your broker for persistent MQTT sessions.
+  mqtt_client_id: ses-frigate-home
+  mqtt_topic: frigate/reviews
+  mqtt_username_env: MQTT_USERNAME
+  mqtt_password_env: MQTT_PASSWORD
+  mqtt_tls: false
+  camera_channels:
+    wyze_front: frigate.front
+    wyze_back: frigate.back
+    wyze_garage: frigate.garage
+ses:
+  host_url: https://events.example.com
+  client_id: frigate-home
+  token_env: SES_CLIENT_TOKEN
+  heartbeat_seconds: 60
+  outbox_path: /data/outbox.sqlite3
+alerts:
+  only_labels: [person]
+  channel_suffix: person
+  initial_snapshot_wait_seconds: 2
+  max_snapshot_retry_seconds: 15
+  snapshot_retry_seconds: 2

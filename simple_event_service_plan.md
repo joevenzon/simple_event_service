@@ -691,22 +691,64 @@ done condition remains unverified.
 ### Phase 4 — Frigate monitor client
 
 - [ ] Deploy/configure local Mosquitto and Frigate MQTT if not already present.
-- [ ] Implement review event parser, person filter and camera→channel map.
+- [x] Implement review event parser, person filter and camera→channel map.
 - [ ] Integrate correct Frigate snapshot/thumbnail API for running version.
-- [ ] Implement persistent outbox and exactly-one-stored-event semantics via stable review ID.
-- [ ] Heartbeat reports and restart/reconnect handling.
+- [x] Implement persistent outbox and exactly-one-stored-event semantics via stable review ID.
+- [x] Heartbeat reports and restart/reconnect handling.
 - [ ] Test with one Wyze camera, then all three.
+
+**Implementation (2026-10-19):** Added the independent `ses-frigate-monitor` workspace
+package, validated YAML/environment configuration, a non-root container and separate
+home Compose scaffold. First qualifying `new/update/end` person alerts are committed
+before MQTT acknowledgment; stable review keys, frozen JSON/JPEG payloads, and compact
+deduplication receipts prevent updates/retries from creating additional stored events.
+Snapshot acquisition uses authenticated review metadata and its validated thumbnail
+path, with an associated person-object snapshot fallback. Missing images become text
+events after a bounded retry window. Uploads retry transient failures with jitter and
+`Retry-After`; permanent failures preserve payloads for operator requeue. Heartbeats
+include MQTT/API connectivity, version, queue/failed counts, and last upload time.
+
+**Local validation (2026-10-19):** 282 tests pass (67 added for the monitor); Ruff
+lint/formatting and lockfile consistency pass. Tests include review updates and
+out-of-order messages, camera mapping, image retrieval/authentication and fallback,
+persisted retry/restart state, HTTP 429/5xx, ambiguous receipts, and actual host
+multipart ingest/deduplication/heartbeat integration. Both host and monitor production
+images build with separate runtime dependency sets.
+
+**Container validation (2026-10-19):** An internal Docker network with a temporary
+Mosquitto broker and synthetic loopback Frigate/SES fixtures passes QoS 1 handoff,
+review-update deduplication, thumbnail retrieval, durable HTTP 503 retry, container
+restart, persistent broker-session replay, identical frozen JSON/image retries, and
+heartbeat upload. The monitor runs non-root with a read-only filesystem and no host
+package installed. No ports are published; temporary containers, network, and data
+volume are removed. The check is reproducible with `tests/check_frigate_container.py`.
+
+**Acceptance remaining:** No production Frigate or broker configuration was changed.
+The read-only version probe from the restricted development environment did not reach
+`10.0.0.5:8971`; installed-version compatibility is unverified. API behavior is based on
+official documentation and Frigate 0.16.2 source, exercised with synthetic fixtures.
+Keep the running-version API checkbox open until checked on the target deployment.
+Broker setup/QoS, TLS trust, one-camera/three-camera detection, and real phone push
+remain manual. See `docs/frigate-monitor.md` for configuration and acceptance steps.
 
 **Done when:** A real person detection creates a single `frigate.front.person` SES event with snapshot and push; repeated review updates do not spam the phone; Frigate remains inaccessible from the public internet.
 
 ### Phase 5 — Hardening and maintenance
 
-- [ ] Implement automated 7-day retention cleanup and orphan file pruning.
+- [x] Implement automated 7-day retention cleanup and orphan file pruning.
 - [ ] Test backup/restore, token rotation and revocation, expired sessions.
 - [ ] Add health/status failure metrics and disk monitoring.
 - [ ] End-to-end VPS outage recovery test with queued events.
 - [ ] Validate iOS behavior on cellular with web dashboard link.
 - [ ] Decide whether direct ntfy attachments are worth the image privacy tradeoff.
+
+Retention runs in the existing worker at startup and hourly, even when ntfy is disabled.
+It expires events by host receipt time using `EVENT_RETENTION_DAYS=7`, cascades delivery
+deletion, and prunes unreferenced image metadata, originals, thumbnails, interrupted
+uploads, and empty date directories in bounded batches. Shared writer locking protects
+ingest and thumbnail generation; committed deletions and orphan reconciliation recover
+from interruptions. Storage errors retry after a minute. `python -m app.cleanup` runs
+an immediate pass and reports failures. See `docs/operations.md` for operating details.
 
 **Done when:** System recovers automatically from short outages, retains only intended data, and is manageable from a short operations guide.
 

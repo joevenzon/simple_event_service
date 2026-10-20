@@ -1,8 +1,9 @@
 # Operations
 
-Phase 3 provides provisioning, health checks, event/image ingestion, human login,
+The host provides provisioning, health checks, event/image ingestion, human login,
 private query APIs, a responsive status page, client heartbeats, and durable text
-notifications through ntfy. Cleanup and backups remain in later phases.
+notifications through ntfy. The worker automates event retention and orphan pruning;
+operators monitor disk use and manage backups. The service has no backup command.
 
 ## Local development
 
@@ -25,11 +26,11 @@ uv sync --python 3.12 --frozen --all-packages
 
 If pytest hangs while entering Starlette's `TestClient`, check whether the execution
 sandbox permits writes to local socketpairs. TestClient uses an AnyIO portal in another
-thread; Python's asyncio loop wakes that thread by writing to a socketpair. In the
-restricted environment tested here, that write raises `PermissionError` with errno 1
+thread; Python's asyncio loop wakes that thread by writing to a socketpair. In a
+restricted sandbox, that write can raise `PermissionError` with errno 1
 (`Operation not permitted`). Asyncio normally suppresses the error, so the caller waits
-indefinitely. An empty Starlette application and a standard-library cross-thread asyncio
-callback reproduce the hang independently of SES startup.
+indefinitely. An empty Starlette application or a standard-library cross-thread asyncio
+callback can help isolate the problem from SES startup.
 
 Run the existing environment's tests from a normal local terminal, or use an approved
 test command outside the restricted sandbox:
@@ -38,9 +39,8 @@ test command outside the restricted sandbox:
 .venv/bin/python -m pytest -q
 ```
 
-The same environment passes the test suite outside the sandbox. No dependency
-change or application workaround is needed for this failure. For a bounded diagnostic
-on Linux:
+Socket permission failures require an environment change rather than an application
+workaround. For a bounded diagnostic on Linux:
 
 ```sh
 timeout 20s .venv/bin/python -m pytest \
@@ -49,7 +49,7 @@ timeout 20s .venv/bin/python -m pytest \
 ```
 
 A stack waiting in `anyio.from_thread` / `TestClient.__enter__` is a reason to investigate the portal;
-confirm socket permissions before attributing the hang to this environment issue.
+confirm socket permissions before attributing the hang to sandbox restrictions.
 
 ## Settings
 
@@ -65,11 +65,11 @@ confirm socket permissions before attributing the hang to this environment issue
 | `SES_INGEST_PER_MINUTE` | `60`; event/heartbeat attempts per client per 60-second window, including retries. |
 | `SES_MAX_IMAGE_BYTES` | `5242880` (5 MiB); source and sanitized image limit, adjustable downward. |
 | `SES_MAX_IMAGE_PIXELS` | `20000000`; decoded image pixel cap, adjustable downward. |
-| `EVENT_RETENTION_DAYS` | `7`, positive integer; cleanup is not implemented yet. |
+| `EVENT_RETENTION_DAYS` | `7`, positive integer; worker cleanup expires events by host receipt time. |
 | `SES_LOG_LEVEL` | `info`; accepts debug, info, warning, error, critical. |
 | `NTFY_URL` | `https://ntfy.sh`; an origin without credentials, path, query or fragment; production requires HTTPS. |
 | `NTFY_TOPIC` | Empty/unset disables publishing. Otherwise use a random topic of 32–128 ASCII letters, digits, `_` or `-`; placeholders rejected. |
-| `NTFY_SEND_IMAGES` | Must remain `false`; enabling an unimplemented image publishing path is rejected. |
+| `NTFY_SEND_IMAGES` | Must remain `false`; image publishing is unsupported and enabling it is rejected. |
 | `SES_NOTIFICATION_COOLDOWN_SECONDS` | `60`; per client/channel, 0 disables, maximum 86400. Suppressed pushes remain in history. |
 | `SES_NOTIFICATION_MAX_ATTEMPTS` | `8`; delivery attempt budget, 1–100, including interrupted attempts. |
 
@@ -146,7 +146,6 @@ docker compose --project-directory deploy exec host ses create-client frigate-ho
 If uv is not installed on the VPS, generate the secret with any available Python 3
 interpreter or a local trusted password manager. Keep `.env` privately owned by the deployer.
 Configure DNS A/AAAA records and the VPS firewall before requesting certificates.
-Local implementation and tests do not deploy to a VPS.
 
 The Docker build context is the repository root; the lockfile is used with `uv sync --frozen`.
 The host and worker run as UID/GID 10001 with read-only root filesystems and a shared writable `/data` volume.
@@ -168,8 +167,8 @@ docker compose --project-directory deploy exec host ses init-db
 ```
 
 `init-db` is idempotent. Restart and rebuild preserve the named volume. `docker compose down`
-also preserves it; adding `--volumes` destroys persisted data. A deployment verification
-must still exercise the image and volume on a Docker-capable machine.
+also preserves it; adding `--volumes` destroys persisted data. Verify image startup and
+volume persistence on a Docker-capable machine as part of deployment.
 
 ## Notifications and iPhone verification
 
@@ -230,7 +229,7 @@ means relay acceptance, not proof of phone receipt. `/readyz` requires a worker 
 within 120 seconds when a topic is configured, in addition to its database write probe.
 Relay outages do not make readiness fail while the worker remains active.
 
-For real-device acceptance:
+To verify notification delivery on a real device:
 
 1. Deploy with public HTTPS, configure a random topic, subscribe on the iPhone, and add
    an enabled rule. Submit a matching event using the [API examples](api.md).
@@ -242,8 +241,8 @@ For real-device acceptance:
    remains in history with `suppressed_cooldown` and produces no push.
 
 Automated tests and the isolated HTTPS mock relay verify host behavior without sending
-public notifications. Physical iPhone delivery, cellular access, public DNS/TLS, and the
-notification tap behavior still need this manual acceptance check. API details follow
+public notifications. Verify physical iPhone delivery, cellular access, public DNS/TLS,
+and notification tap behavior manually for each deployment. API details follow
 the [ntfy JSON publishing documentation](https://docs.ntfy.sh/publish/#publish-as-json).
 
 ## Migration and recovery notes
@@ -253,21 +252,55 @@ write lock before reading the applied history; re-running initialization does no
 existing users or tokens. Failed migration DDL and version records roll back together.
 A newer or incompatible schema stops initialization instead of attempting a downgrade.
 Add a new numbered migration to `host/app/migrations.py` for schema changes.
-Phase 1 appends migration 2 for persistent request throttles; Phase 0 databases upgrade
-at startup without replacing existing users, tokens, or data.
-Phase 3 appends migrations 3 and 4 for durable claims, cooldowns, worker heartbeats, and
-optional priority overrides. Existing explicit rules and event records are preserved;
-old events are not automatically queued for push.
+Startup applies missing numbered migrations without replacing existing users, tokens,
+or event data. Migrations preserve explicit notification rules and do not automatically
+queue existing events for push.
 
 Images use a temporary file, fsync and atomic rename before their event transaction commits.
 Ordinary write/transaction failures remove staged files and roll back image/event rows.
-A process crash between rename and database commit can leave an unreferenced file; orphan
-reconciliation and scheduled retention arrive in Phase 5. This release has no automatic
-seven-day deletion. Monitor disk use and use only data whose retention you can manage.
+A process crash between rename and database commit can leave an unreferenced file; the
+worker's orphan reconciliation removes it on a subsequent cleanup pass.
 
-The current milestone has no scheduled retention or backup command. Until those are
-implemented, any test data remains on disk. Future backups must use SQLite's online backup
-API and an explicit expiry policy; copying a live SQLite main file without its WAL is unsafe.
+## Retention and orphan cleanup
+
+Keep `python -m app.worker` running even when `NTFY_TOPIC` is empty. Compose starts it
+automatically. Cleanup runs on worker startup and hourly after each completed pass,
+using `EVENT_RETENTION_DAYS` (default `7`). Restart the worker after changing the setting.
+Events with host `received_at` strictly older than the cutoff are deleted, along with
+their delivery rows, original images, and cached thumbnails. Producer `occurred_at` does
+not affect expiry. At normal operation, expiry can lag the configured age by up to an
+hour plus the cleanup pass duration. Pending deliveries for expired events are removed;
+the publisher skips expired events while cleanup is still in progress.
+Deleting history also removes its deduplication keys; resubmitting an expired event key
+creates a new event with a new host receipt time.
+
+Cleanup commits batches of up to 100 event or image rows and reconciles files in both
+`/data/images` and `/data/thumbnails`. It removes unreferenced files, abandoned `.upload-*`
+files, and empty date directories. It does not follow directory symlinks or touch files
+outside these trees. Current references are rechecked under the same writer lock used
+by ingest and thumbnail generation. Clients, credentials, rules, and login sessions
+are preserved. Notification processing and worker heartbeats continue between batches.
+
+Run an immediate pass using the same environment and data directory:
+
+```sh
+uv run python -m app.cleanup
+# In the deployed Compose project:
+docker compose --project-directory deploy exec worker python -m app.cleanup
+docker compose --project-directory deploy logs --tail=50 worker
+```
+
+The command logs counts for expired events, orphan image rows, pruned files, and errors;
+it exits nonzero on incomplete cleanup. Worker cleanup retries storage failures and
+failed file removals after a minute. Committed deletions survive interruption, and later
+passes recover leftover metadata/files. Resolve permission or disk errors reported in
+worker logs; monitor the worker healthcheck and disk use. Cleanup removes live records
+and files; SQLite free pages/WAL and filesystem storage are not secure media erasure.
+
+The service has no backup command. Use SQLite's online backup API for database backups
+and define an explicit backup expiry policy; copying a live SQLite main file without
+its WAL is unsafe. Include private image files in the backup and coordinate image capture
+with database backup so restored event records retain their referenced images.
 
 ## Heartbeats and status page verification
 
@@ -291,7 +324,7 @@ regenerated on the next authorized view while the original exists. Neither direc
 served statically. The wheel includes the HTML templates, stylesheet, and time-formatting
 script used by the Docker image; no frontend build is needed.
 
-For the remaining real-device acceptance check, deploy through the existing Caddy HTTPS
+To verify the status pages on a real device, deploy through the Caddy HTTPS
 configuration, then use Safari on an iPhone over cellular:
 
 1. Open `/events/{id}` for an image event while signed out. Confirm it goes to login, then
@@ -304,5 +337,11 @@ configuration, then use Safari on an iPhone over cellular:
    login and the direct image routes return 401. Repeat after session expiry or revocation.
 
 Local automated checks cannot verify public DNS/certificate issuance, cellular routing,
-or the behavior of a physical iPhone. Keep that Phase 2 acceptance item pending until
-these checks pass on the deployed hostname.
+or the behavior of a physical iPhone. Run these checks on the deployed hostname.
+
+## Frigate client operations
+
+The independently deployed home monitor has its own
+[setup, TLS/authentication, outbox recovery, Docker, and camera verification guide](frigate-monitor.md).
+Its Compose project contains only the monitor and publishes no ports. Configure an
+existing broker/Frigate connection explicitly; the monitor never changes NVR settings.

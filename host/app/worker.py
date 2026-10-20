@@ -1,4 +1,4 @@
-"""Deliver durable text notifications with bounded retries and restart-safe claims."""
+"""Deliver durable notifications and run scheduled event retention and file cleanup."""
 
 import argparse
 import json
@@ -14,6 +14,7 @@ from uuid import uuid4
 import httpx
 from pydantic import ValidationError
 
+from app.cleanup import CleanupSchedule
 from app.config import Settings
 from app.db import Database, utc_now
 
@@ -48,6 +49,7 @@ def check_worker(database: Database) -> None:
 
 def claim_delivery(database: Database, settings: Settings, now: str):
     """Reserve one due job and count its attempt before publishing outside the writer lock."""
+    cutoff = timestamp(datetime.fromisoformat(now) - timedelta(days=settings.retention_days))
     with database.transaction() as connection:
         # A crash during the final attempt still consumes the retry budget.
         connection.execute(
@@ -59,9 +61,9 @@ def claim_delivery(database: Database, settings: Settings, now: str):
         row = connection.execute(
             """SELECT d.id AS delivery_id, d.attempts, d.ntfy_priority, e.*
                 FROM notification_deliveries d JOIN events e ON e.id = d.event_id
-                WHERE d.state = 'pending' AND d.next_attempt_at <= ?
+                WHERE d.state = 'pending' AND d.next_attempt_at <= ? AND e.received_at >= ?
                 ORDER BY d.next_attempt_at, d.id LIMIT 1""",
-            (now,),
+            (now, cutoff),
         ).fetchone()
         if row is None:
             return None
@@ -201,14 +203,16 @@ def main(argv: list[str] | None = None) -> None:
     stop = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, lambda *_: stop.set())
+    cleanup = CleanupSchedule(database, settings)
     with httpx.Client() as client:
         while not stop.is_set():
+            cleaning = cleanup.tick()
             try:
                 handled = process_once(database, settings, client)
             except (sqlite3.Error, OSError):
                 logger.warning("Notification storage unavailable")
                 handled = False
-            if not handled:
+            if not handled and not cleaning:
                 stop.wait(POLL_SECONDS)
 
 
