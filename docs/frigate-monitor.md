@@ -4,6 +4,9 @@ The independent `ses-frigate-monitor` package subscribes to one local Frigate re
 topic and uploads person alerts to SES. It publishes no MQTT messages and changes no
 Frigate settings. No Frigate installation is required for the automated tests.
 
+For the full Ubuntu setup, including an explanation and installation of an MQTT
+broker, see the [VPS + Frigate first-deployment walkthrough](first-deployment.md).
+
 The implementation follows the documented
 [review MQTT payload](https://docs.frigate.video/integrations/mqtt/#frigatereviews),
 [review API](https://docs.frigate.video/integrations/api/review-review-get/), and

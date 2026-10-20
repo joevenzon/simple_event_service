@@ -1,4 +1,4 @@
-{$SES_DOMAIN} {
+https://{$SES_DOMAIN}:{$SES_HTTPS_PORT:443} {
     encode zstd gzip
 
     @internal path /readyz /readyz/*

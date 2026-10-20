@@ -128,8 +128,12 @@ See [API details and curl examples](api.md).
 
 ## VPS deployment
 
+For setup from fresh Ubuntu machines, including Git/Docker prerequisites and the
+home MQTT broker, follow the [first-deployment walkthrough](first-deployment.md).
+
 Requires Docker Engine with Compose on the VPS, a hostname pointing at it, and inbound
-ports 80/443 for Caddy. From the repository root on the VPS:
+TCP port 80 plus the HTTPS port for Caddy (443 by default). From the repository root
+on the VPS:
 
 ```sh
 cp deploy/.env.example deploy/.env
@@ -147,10 +151,26 @@ If uv is not installed on the VPS, generate the secret with any available Python
 interpreter or a local trusted password manager. Keep `.env` privately owned by the deployer.
 Configure DNS A/AAAA records and the VPS firewall before requesting certificates.
 
+To serve HTTPS on a specific port, set `SES_HTTPS_PORT` in `deploy/.env` and include
+that port in `SES_BASE_URL`. For example:
+
+```dotenv
+SES_DOMAIN=events.example.com
+SES_HTTPS_PORT=8443
+SES_BASE_URL=https://events.example.com:8443
+```
+
+Use that same origin for the Frigate monitor's `ses.host_url`, browser access,
+and public health checks. Allow TCP 8443 in the VPS/provider firewall. The setting
+defaults to 443 and changes Caddy's listener and published port; Uvicorn stays private
+on port 8000. Port 80 remains required for HTTP redirects and automatic certificate
+validation, so an existing web server on port 80 needs separate integration. See
+[Caddy's challenge requirements](https://caddyserver.com/docs/automatic-https#acme-challenges).
+
 The Docker build context is the repository root; the lockfile is used with `uv sync --frozen`.
 The host and worker run as UID/GID 10001 with read-only root filesystems and a shared writable `/data` volume.
 For a bind mount instead of the named volume, provision its ownership for that UID first.
-Caddy receives only the hostname, not the application's session secret.
+Caddy receives the hostname and HTTPS port, not the application's session secret.
 
 Only Caddy publishes TCP ports. Uvicorn trusts forwarded headers because this setup exposes
 the host only on the private Compose network behind Caddy. Do not publish its port directly

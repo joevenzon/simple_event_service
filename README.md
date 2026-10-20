@@ -3,6 +3,10 @@
 A private event archive for independently running clients, with hierarchical channels,
 a mobile status page, and selected notifications through ntfy.sh.
 
+For an initial real deployment, follow the
+[Ubuntu VPS + Docker Frigate walkthrough](docs/first-deployment.md), including Git,
+Docker, DNS/HTTPS, MQTT broker setup, and the first camera test.
+
 The host accepts JSON/image events, enforces scoped client tokens, deduplicates retries,
 and serves a responsive dashboard,
 filtered event feed, full snapshots, private thumbnails, and client health screens through

@@ -53,9 +53,10 @@ services:
     restart: unless-stopped
     environment:
       SES_DOMAIN: ${SES_DOMAIN:?Set SES_DOMAIN in deploy/.env}
+      SES_HTTPS_PORT: ${SES_HTTPS_PORT:-443}
     ports:
       - "80:80"
-      - "443:443"
+      - "${SES_HTTPS_PORT:-443}:${SES_HTTPS_PORT:-443}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
