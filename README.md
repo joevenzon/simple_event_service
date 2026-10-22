@@ -1,3 +1,7 @@
+# NOT RECOMMENDED, DON'T USE
+
+I was planning on cleaning this up and turning it into a real piece of software, but found a different solution instead, so this is a half-finished untested bundle of code.
+
 # Simple Event Service
 
 A private event archive for independently running clients, with hierarchical channels,
